@@ -1,0 +1,90 @@
+---
+title: "Dexamethasone response in airway cells (DESeq2)"
+output: github_document
+---
+
+Which genes does dexamethasone switch on or off in human airway smooth muscle cells? Data: the Bioconductor `airway` dataset (4 donor cell lines, each untreated or treated). Methods: differential expression with DESeq2 (`~ cell + dex`), VST + PCA for quality control, and Benjamini–Hochberg FDR < 0.05.
+
+Requires DESeq2 and airway from Bioconductor; knit the Rmd to reproduce.
+
+```{r, message = FALSE}
+library(DESeq2); library(airway)
+data(airway)
+```
+
+## 1. Set up and run
+
+```{r, message = FALSE}
+# Build the DESeq2 object (counts + sample info + design).
+# ~ cell + dex: test dex while accounting for differences between cell lines.
+dds <- DESeqDataSet(airway, design = ~ cell + dex)
+
+# Make untreated the baseline so log2FC = trt vs untrt.
+# (Default is alphabetical, which makes "trt" the baseline and flips the signs.)
+dds$dex <- relevel(dds$dex, ref = "untrt")
+
+# Check the design: 4 cell lines x 2 treatments, 1 sample each
+table(dds$cell, dds$dex)
+levels(dds$dex)   # check that "untrt" is listed first = reference
+
+# Normalize, estimate dispersions, then fit and test every gene
+dds <- DESeq(dds)
+```
+
+## 2. Quality check: do samples separate by treatment and donor?
+
+```{r, message = FALSE}
+# vst: normalize by size factor + log2-like transform so every gene contributes fairly.
+# PCA: check whether samples group by treatment (1st plot) and by donor (2nd plot).
+plotPCA(vst(dds), intgroup = "dex")
+plotPCA(vst(dds), intgroup = "cell")
+```
+
+## 3. Results
+
+```{r}
+# Results table: one row per gene (log2FC, p-value, padj). alpha = FDR cutoff of 0.05.
+res <- results(dds, alpha = 0.05)
+
+# Add gene symbols: match each Ensembl ID to the gene table and copy its symbol.
+res$symbol <- rowData(airway)[rownames(res), "symbol"]
+
+# Number of genes up/down at padj < 0.05
+summary(res)
+
+# Top 10 genes, most significant first
+head(res[order(res$padj), c("symbol", "log2FoldChange", "padj")], 10)
+```
+
+## 4. Sanity check on known dexamethasone responders
+
+DUSP1, KLF15 and PER1 are well-known glucocorticoid-responsive genes, so they should all be upregulated.
+
+```{r}
+# Look up by Ensembl ID: DUSP1, KLF15, PER1. Expect positive log2FC and small padj.
+res[c("ENSG00000120129", "ENSG00000163884", "ENSG00000179094"),
+    c("symbol", "log2FoldChange", "padj")]
+```
+
+## 5. Volcano plot
+
+```{r}
+# x = effect size (log2FC), y = significance (-log10 padj); red = padj < 0.05.
+# Genes with padj = NA (filtered for low counts) are not plotted.
+plot(res$log2FoldChange, -log10(res$padj), pch = 20,
+     main = "Dexamethasone vs untreated",
+     col = ifelse(res$padj < 0.05, "red", "grey"),
+     xlab = "log2 fold change", ylab = "-log10 padj")
+abline(h = -log10(0.05), lty = 2) # dashed line = padj 0.05 threshold
+```
+
+## Takeaways
+
+The PCA plots show treated and untreated samples separate along PC1 and donors separate along PC2, so dexamethasone is the main source of variation between samples, followed by donor differences. Of 33,469 genes with nonzero read counts, 4,028 changed at padj < 0.05: 2,211 upregulated and 1,817 downregulated. Known responders to dexamethasone DUSP1, KLF15, PER1 were all upregulated (log2FC around 3–4.5), which confirms that the analysis captures expected biology. The volcano plot shows significantly affected genes in red and non-significant changes in gray.
+
+## Session info
+
+```{r}
+# R and package versions used, for reproducibility
+sessionInfo()
+```
